@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "stackoverflow-comment-recommender"
+version = "0.1.0"
+description = "Shared Stack Overflow crawler with Python/PostgreSQL and Spark/Iceberg pipelines"
+requires-python = ">=3.11"
+dependencies = [
+  "beautifulsoup4==4.12.3",
+  "pandas==2.2.3",
+  "pyarrow==18.1.0",
+  "requests==2.32.3",
+]
+
+[project.optional-dependencies]
+postgres = ["psycopg[binary]==3.2.3"]
+dev = ["pytest==8.3.4", "ruff==0.8.4"]
+
+[project.scripts]
+so-crawl = "so_recommender.crawler:main"
+so-clean-python = "so_recommender.python_pipeline:main"
+so-load-postgres = "so_recommender.postgres_loader:main"
+so-validate = "so_recommender.validate:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

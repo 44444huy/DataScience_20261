@@ -1,0 +1,15 @@
+[crawl]
+base_url = "https://stackoverflow.com"
+tags = ["python", "pandas", "java", "javascript", "sql"]
+listing_pages_per_tag = 1
+questions_per_listing = 15
+max_questions = 50
+request_delay_seconds = 3.0
+request_timeout_seconds = 30
+user_agent = "StackOverflowResearchCrawler/0.1 (student project; contact: replace-with-your-email)"
+respect_robots_txt = true
+save_html = true
+
+[paths]
+raw_dir = "data/raw"
+

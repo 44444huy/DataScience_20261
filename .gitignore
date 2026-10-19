@@ -1,0 +1,26 @@
+# Python environments and caches
+**/.venv/
+**/__pycache__/
+**/*.py[cod]
+**/.pytest_cache/
+**/.ruff_cache/
+**/.coverage
+**/.env
+
+# IDE and operating-system files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Generated crawler data
+youtube_crawler/data/
+stackoverflow_recommender/data/raw/html/
+stackoverflow_recommender/data/raw/state.sqlite3
+stackoverflow_recommender/data/raw/*.jsonl
+stackoverflow_recommender/data/clean/
+stackoverflow_recommender/data/lakehouse/
+
+# Logs
+**/logs/
+**/*.log

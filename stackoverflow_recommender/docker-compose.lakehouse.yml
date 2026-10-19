@@ -1,0 +1,134 @@
+services:
+  minio:
+    # MinIO stopped publishing anonymously pullable community images in 2026.
+    # This public image is rebuilt from the official MinIO source for local development.
+    image: ghcr.io/coollabsio/minio:RELEASE.2025-10-15T17-29-55Z
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-polaris_root}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-polaris_pass}
+    ports:
+      - "${MINIO_API_PORT:-19000}:9000"
+      - "${MINIO_CONSOLE_PORT:-19001}:9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  minio-setup:
+    image: amazon/aws-cli:2.37.12
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-polaris_root}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-polaris_pass}
+      AWS_DEFAULT_REGION: us-east-1
+      AWS_ENDPOINT_URL: http://minio:9000
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        aws s3 mb s3://stackoverflow || true
+        aws s3 ls
+
+  polaris:
+    image: apache/polaris:1.8.0
+    depends_on:
+      minio:
+        condition: service_healthy
+      minio-setup:
+        condition: service_completed_successfully
+    environment:
+      AWS_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-polaris_root}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-polaris_pass}
+      POLARIS_BOOTSTRAP_CREDENTIALS: POLARIS,${POLARIS_ROOT_CLIENT_ID:-root},${POLARIS_ROOT_CLIENT_SECRET:-s3cr3t}
+      polaris.realm-context.realms: ${POLARIS_REALM:-POLARIS}
+      quarkus.otel.sdk.disabled: "true"
+    ports:
+      - "${POLARIS_API_PORT:-18181}:8181"
+      - "${POLARIS_MANAGEMENT_PORT:-18182}:8182"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8182/q/health"]
+      interval: 3s
+      timeout: 10s
+      retries: 30
+      start_period: 10s
+
+  polaris-setup:
+    image: alpine/curl:8.22.0
+    depends_on:
+      polaris:
+        condition: service_healthy
+    environment:
+      CLIENT_ID: ${POLARIS_ROOT_CLIENT_ID:-root}
+      CLIENT_SECRET: ${POLARIS_ROOT_CLIENT_SECRET:-s3cr3t}
+      CATALOG_NAME: ${POLARIS_CATALOG:-stackoverflow}
+      REALM: ${POLARIS_REALM:-POLARIS}
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        set -eu
+        apk add --no-cache jq
+        TOKEN_RESPONSE=$$(curl --fail-with-body -sS -X POST http://polaris:8181/api/catalog/v1/oauth/tokens \
+          -H 'Content-Type: application/x-www-form-urlencoded' \
+          -d "grant_type=client_credentials&client_id=$${CLIENT_ID}&client_secret=$${CLIENT_SECRET}&scope=PRINCIPAL_ROLE:ALL")
+        TOKEN=$$(echo "$$TOKEN_RESPONSE" | jq -r '.access_token')
+        PAYLOAD='{
+          "catalog": {
+            "name": "'$$CATALOG_NAME'",
+            "type": "INTERNAL",
+            "readOnly": false,
+            "properties": {"default-base-location": "s3://stackoverflow/warehouse"},
+            "storageConfigInfo": {
+              "storageType": "S3",
+              "allowedLocations": ["s3://stackoverflow/"],
+              "endpoint": "http://minio:9000",
+              "pathStyleAccess": true,
+              "region": "us-east-1"
+            }
+          }
+        }'
+        CREATE_STATUS=$$(curl -sS -o /tmp/catalog-response.json -w '%{http_code}' \
+          -X POST http://polaris:8181/api/management/v1/catalogs \
+          -H "Authorization: Bearer $$TOKEN" \
+          -H "Polaris-Realm: $$REALM" \
+          -H "Content-Type: application/json" \
+          -d "$$PAYLOAD")
+        case "$$CREATE_STATUS" in
+          200|201|409) ;;
+          *) cat /tmp/catalog-response.json; exit 1 ;;
+        esac
+        curl --fail-with-body -sS -X PUT \
+          http://polaris:8181/api/management/v1/catalogs/$$CATALOG_NAME/catalog-roles/catalog_admin/grants \
+          -H "Authorization: Bearer $$TOKEN" \
+          -H "Polaris-Realm: $$REALM" \
+          -H "Content-Type: application/json" \
+          -d '{"type":"catalog","privilege":"CATALOG_MANAGE_CONTENT"}'
+        touch /tmp/setup-complete
+        tail -f /dev/null
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/setup-complete"]
+      interval: 2s
+      timeout: 5s
+      retries: 120
+
+  spark:
+    image: apache/spark:3.5.9-java17-python3
+    depends_on:
+      polaris-setup:
+        condition: service_healthy
+    volumes:
+      - ./:/workspace
+    working_dir: /workspace
+    command: ["/bin/bash", "-lc", "mkdir -p /tmp/.ivy2/cache /tmp/.ivy2/jars && sleep infinity"]
+    ports:
+      - "${SPARK_UI_PORT:-14040}:4040"
+
+volumes:
+  minio-data:
